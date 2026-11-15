@@ -53,11 +53,23 @@ def buscar_observaciones(ra: float, dec: float, detector: str = "D2", maxrec: in
     """Consulta imagenes que cubren el punto (ra, dec), no necesariamente todo el FOV."""
     ra, dec, _, detector = _validar_entrada(ra, dec, 6.0, detector)
     centro = SkyCoord(ra * u.deg, dec * u.deg, frame="icrs")
-    tabla_vo = Irsa.query_sia(
-        pos=(centro, 1 * u.arcsec),
-        collection=COLECCIONES,
-        maxrec=maxrec,
-    )
+    # Un 502/503 de IRSA no implica que la región carezca de datos.
+    for intento in range(2):
+        try:
+            tabla_vo = Irsa.query_sia(
+                pos=(centro, 1 * u.arcsec),
+                collection=COLECCIONES,
+                maxrec=maxrec,
+            )
+            break
+        except Exception as exc:
+            mensaje = str(exc).lower()
+            recuperable = any(token in mensaje for token in
+                              ("502", "503", "504", "timeout", "timed out", "connection"))
+            if intento == 1 or not recuperable:
+                raise
+            time.sleep(2.0)
+
     df = tabla_vo.to_pandas()
     if df.empty:
         return df
@@ -327,9 +339,20 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
         datos, max_epocas=max_epocas, separacion_dias=separacion_dias
     )
     if salida is None:
-        identificador = sha256(f"{ra:.8f}|{dec:.8f}|{fov_arcmin:.4f}|{detector}".encode()).hexdigest()[:12]
+        identificador = sha256(f"{ra:.8f}|{dec:.8f}|{fov_arcmin:.4f}|{detector}|{max_epocas}|{max_por_ventana}".encode()).hexdigest()[:12]
         salida = Path("resultados_spherex") / f"blink_{detector}_{identificador}.gif"
     gif = _crear_gif(grupo, comun, wcs_salida, salida, detector)
+    # Las figuras son una ayuda visual opcional: un fallo en ellas no debe
+    # descartar una animación científica ya generada correctamente.
+    ruta_inicial = ruta_alineada = None
+    error_figuras = None
+    try:
+        from spherex_figuras import crear_comparaciones
+        ruta_inicial, ruta_alineada = crear_comparaciones(
+            grupo, comun, wcs_salida, gif, detector
+        )
+    except Exception as exc:
+        error_figuras = str(exc)
     tabla = pd.DataFrame([{
         "obs_id": d["obs_id"],
         "fecha_utc": d["fecha_utc"],
@@ -339,6 +362,9 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
     } for d in grupo])
     return {
         "archivo_gif": str(gif),
+        "archivo_comparacion_inicial": ruta_inicial,
+        "archivo_comparacion_alineada": ruta_alineada,
+        "error_figuras": error_figuras,
         "observaciones": tabla,
         "catalogo_total": len(catalogo),
         "candidatas": len(candidatas),
@@ -348,5 +374,7 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
         "fraccion_ancho": frac,
         "rango_lambda_um": float(tabla["lambda_um"].max() - tabla["lambda_um"].min()),
         "detector": detector,
-        "advertencia": "Comparacion visual exploratoria; sin PSF/fondo/bandas igualadas, no prueba variabilidad.",
+        "advertencia": ("Las imágenes provienen de observaciones reales tomadas en distintas fechas. "
+                    "Aunque elegimos bandas parecidas, las diferencias visuales por sí solas "
+                    "no permiten confirmar cambios físicos en los objetos."),
     }
