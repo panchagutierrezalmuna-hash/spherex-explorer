@@ -19,7 +19,7 @@ from pathlib import Path
 import streamlit as st
 
 from spherex_explorer import explorar_region
-from spherex_moviles import barnard_en, consultar_asteroide, figura_posiciones, vista_recorte_asteroide
+from spherex_moviles import barnard_en, figura_posiciones
 
 st.set_page_config(page_title="Planeta 9 · SPHEREx Motion Explorer",
                    page_icon="🌌", layout="wide",
@@ -494,77 +494,187 @@ if pagina == "Exploraciones destacadas":
     st.stop()
 
 if pagina == "Asteroides":
-    st.header("Tras la pista de un asteroide")
-    st.write("Los asteroides se desplazan respecto al fondo de estrellas. A diferencia "
-             "de las galaxias, no basta con buscar una única RA y Dec: necesitamos "
-             "saber dónde se esperaba el objeto en cada fecha.")
-    st.write("Usamos **MOST**, el servicio de NASA/IPAC que combina efemérides "
-             "de objetos del sistema solar con el archivo SPHEREx.")
-    st.caption("Primera demostración experimental: (4) Vesta. "
-               "No estamos midiendo su movimiento directamente desde los píxeles.")
-    c1, c2 = st.columns(2)
-    with c1:
-        inicio = st.date_input("Desde", date(2025, 8, 1),
-                               min_value=date(2025, 1, 1), max_value=date.today())
-    with c2:
-        fin = st.date_input("Hasta", date(2025, 8, 31),
-                            min_value=date(2025, 1, 1), max_value=date.today())
-    if inicio > fin:
-        st.error("La fecha de inicio debe ser anterior a la fecha final.")
-        st.stop()
-    @st.cache_data(ttl=3600, show_spinner=False, max_entries=5)
-    def _most_vesta(a, b):
-        return consultar_asteroide("20000004", a, b)
+    # Modulo independiente: no modifica las busquedas del explorador RA/Dec.
+    from spherex_asteroides import OBJETOS as ASTEROIDES, buscar_imagenes, procesar_imagenes, _gif
 
-    if st.button("☄️ Buscar observaciones de Vesta", type="primary"):
+    st.header("☄️ Sigue un asteroide en imágenes de SPHEREx")
+    st.write("Podemos buscar imágenes que hayan observado la zona por la que pasó "
+             "un asteroide. NASA/IPAC MOST calcula su **posición prevista** en cada "
+             "exposición; después descargamos los recortes FITS reales y los "
+             "convertimos en una secuencia que puedes explorar.")
+    st.caption("Esta es una inspección visual: el círculo indica la posición calculada, "
+               "no que hayamos detectado automáticamente al asteroide.")
+
+    a1, a2, a3 = st.columns([1.4, 1, 1])
+    with a1:
+        elegido = st.selectbox("Asteroide", list(ASTEROIDES), key="ast_objeto",
+                               help="Vesta es el ejemplo oficial utilizado en el tutorial MOST de IRSA.")
+    with a2:
+        inicio_ast = st.date_input("Desde", date(2025, 8, 1),
+                                   min_value=date(2025, 1, 1), max_value=date.today(),
+                                   key="ast_inicio")
+    with a3:
+        fin_ast = st.date_input("Hasta", date(2025, 8, 31),
+                                min_value=date(2025, 1, 1), max_value=date.today(),
+                                key="ast_fin")
+    if inicio_ast > fin_ast:
+        st.error("La fecha inicial debe ser anterior a la final.")
+        st.stop()
+    if (fin_ast - inicio_ast).days > 90:
+        st.warning("Para esta demostración, limita la búsqueda a un máximo de 90 días.")
+        st.stop()
+
+    @st.cache_data(ttl=3600, show_spinner=False, max_entries=8)
+    def _buscar_most_seguro(identificador, desde, hasta):
+        return buscar_imagenes(identificador, desde, hasta)
+
+    if st.button("🔎 Buscar imágenes del asteroide en IRSA", type="primary",
+                 use_container_width=True):
         try:
-            with st.spinner("Consultando efemérides y observaciones de Vesta en IRSA MOST…"):
-                st.session_state["most_vesta"] = _most_vesta(inicio.isoformat(), fin.isoformat())
-                st.session_state["most_vesta_periodo"] = (inicio.isoformat(), fin.isoformat())
+            with st.spinner("Buscando exposiciones reales mediante IRSA MOST…"):
+                df = _buscar_most_seguro(ASTEROIDES[elegido],
+                                        inicio_ast.isoformat(), fin_ast.isoformat())
+            st.session_state["ast_consulta"] = {
+                "objeto": elegido, "periodo": (inicio_ast.isoformat(), fin_ast.isoformat()),
+                "datos": df,
+            }
+            st.session_state.pop("ast_imagenes", None)
         except Exception as error:
-            st.session_state.pop("most_vesta", None)
-            st.error("MOST no respondió o no pudo completar la búsqueda. "
-                     "Puedes volver a intentarlo.")
-            with st.expander("Detalles técnicos"):
+            st.session_state.pop("ast_consulta", None)
+            st.session_state.pop("ast_imagenes", None)
+            st.warning("IRSA MOST no respondió a la búsqueda. Es posible que el servidor "
+                       "esté temporalmente ocupado; puedes volver a intentarlo.")
+            with st.expander("Ver detalle del error"):
                 st.code(f"{type(error).__name__}: {error}")
-    resultados = st.session_state.get("most_vesta")
-    if st.session_state.get("most_vesta_periodo") != (inicio.isoformat(), fin.isoformat()):
-        resultados = None
-    if resultados is not None:
-        if resultados.empty:
-            st.info("MOST no encontró imágenes coincidentes en ese período.")
-        else:
-            st.metric("Exposiciones que coinciden con la efeméride", len(resultados))
-            st.caption("Cada punto del gráfico es una posición **prevista**, no un "
-                       "asteroide detectado automáticamente en la imagen.")
-            fig = figura_posiciones(resultados)
+
+    consulta_ast = st.session_state.get("ast_consulta")
+    es_actual = (consulta_ast is not None
+                 and consulta_ast["objeto"] == elegido
+                 and consulta_ast["periodo"] == (inicio_ast.isoformat(), fin_ast.isoformat()))
+    if not es_actual:
+        st.info("Para empezar, prueba **(4) Vesta** entre el 1 y el 31 de agosto de 2025 "
+                "y pulsa «Buscar imágenes». Si IRSA está caído, no se pueden "
+                "fabricar resultados: la página mostrará el aviso correspondiente.")
+        st.link_button("Abrir MOST en NASA/IPAC", "https://irsa.ipac.caltech.edu/applications/MOST/")
+        st.stop()
+
+    df_ast = consulta_ast["datos"]
+    if df_ast.empty:
+        st.info("MOST no encontró exposiciones que coincidan con la trayectoria "
+                "prevista de este objeto en las fechas seleccionadas.")
+        st.stop()
+    st.metric("Exposiciones encontradas por MOST", len(df_ast))
+    st.write("Estas exposiciones cubren la posición prevista del asteroide. "
+             "Ahora puedes descargar algunas imágenes y compararlas.")
+
+    disponibles_ast = sorted(set(df_ast["detector"].dropna().astype(str)))
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        det_ast = st.selectbox("Detector", ["Automático"] + disponibles_ast,
+                               key="ast_detector",
+                               help="Usamos un mismo detector para la secuencia.")
+    with c2:
+        n_ast = st.slider("Máximo de imágenes", 2, 6, 4, key="ast_numero")
+    with c3:
+        campo_ast = st.select_slider("Campo por imagen", options=[2, 3, 4, 5, 6, 8],
+                                     value=5, format_func=lambda x: f"{x}′",
+                                     key="ast_campo")
+
+    @st.cache_data(ttl=2400, show_spinner=False, max_entries=5)
+    def _obtener_secuencia(datos, nombre, detector, n, campo):
+        return procesar_imagenes(datos, objeto=nombre, detector=detector,
+                                max_imagenes=n, campo_arcmin=campo)
+
+    firma_ast = (elegido, inicio_ast.isoformat(), fin_ast.isoformat(),
+                 det_ast, int(n_ast), int(campo_ast))
+    if st.button("🖼️ Mostrar imágenes y crear animación", type="primary",
+                 use_container_width=True):
+        try:
+            with st.spinner("Descargando recortes FITS y preparando imágenes reales de SPHEREx…"):
+                salida_ast = _obtener_secuencia(df_ast, elegido, det_ast, n_ast, campo_ast)
+            st.session_state["ast_imagenes"] = {"firma": firma_ast, "resultado": salida_ast}
+        except Exception as error:
+            st.session_state.pop("ast_imagenes", None)
+            st.warning("No pudimos recuperar los recortes de IRSA esta vez. "
+                       "Puedes reintentar cuando el servidor esté disponible.")
+            with st.expander("Ver detalle del error"):
+                st.code(f"{type(error).__name__}: {error}")
+
+    guardado_ast = st.session_state.get("ast_imagenes")
+    if guardado_ast is not None and guardado_ast["firma"] == firma_ast:
+        r = guardado_ast["resultado"]
+        st.subheader("Así se ve el recorrido en SPHEREx")
+        st.caption("En esta vista cada recorte se centra en **la posición prevista del asteroide**. "
+                   "Por eso las estrellas del fondo pueden cambiar de posición. "
+                   "El círculo cian no es una detección medida.")
+        a, b, c = st.columns(3)
+        a.metric("Imágenes descargadas", r["n_descargadas"])
+        b.metric("Detector", str(r["tabla"]["Detector"].iloc[0]))
+        c.metric("Exposiciones examinadas", r["n_seleccionadas"])
+
+        pestañas = st.tabs(["Animación", "Imágenes individuales", "Trayectoria prevista"])
+        with pestañas[0]:
+            if r["gif_bytes"] is not None:
+                velocidad_ast = st.slider("Velocidad (fotogramas por segundo)",
+                                          0.5, 3.0, 1.0, 0.5, key="ast_velocidad")
+                gif_ast = (r["gif_bytes"] if velocidad_ast == 1.0
+                           else _gif(r["frames_png"], velocidad_ast))
+                st.image(gif_ast, caption=(f"{elegido} · recortes FITS reales "
+                                                "centrados en las posiciones previstas"),
+                         use_container_width=True)
+                st.download_button("⬇️ Descargar GIF de seguimiento", gif_ast,
+                                   file_name="planeta9_asteroide_seguimiento.gif",
+                                   mime="image/gif")
+            else:
+                st.info("Se recuperó una sola imagen válida: se muestra en la pestaña "
+                        "de imágenes individuales. Necesitamos al menos dos para un GIF.")
+        with pestañas[1]:
+            indice_ast = st.slider("Observación", 1, len(r["frames_png"]), 1,
+                                   key="ast_frame")
+            st.image(r["frames_png"][indice_ast - 1],
+                     caption=f"Exposición {indice_ast} de {len(r['frames_png'])}",
+                     use_container_width=True)
+            with st.expander("Ver todas las imágenes"):
+                for k, png in enumerate(r["frames_png"], 1):
+                    st.image(png, caption=f"Fotograma {k}", use_container_width=True)
+        with pestañas[2]:
+            fig = figura_posiciones(df_ast)
             if fig is not None:
                 st.pyplot(fig, clear_figure=True)
                 plt.close(fig)
-            vista = resultados[["fecha", "ra_deg", "dec_deg", "imagen_id"]].copy()
-            vista.columns = ["Fecha UTC", "RA prevista (°)", "Dec prevista (°)", "Imagen"]
-            st.dataframe(vista, hide_index=True, use_container_width=True)
-            with st.expander("Ver un recorte real de una exposición (experimental)"):
-                indice = st.selectbox("Observación", list(range(len(resultados))),
-                                     format_func=lambda i: f"{i + 1} · {resultados.iloc[i]['fecha']}")
-                if st.button("Mostrar recorte FITS de Vesta"):
-                    try:
-                        with st.spinner("Descargando recorte desde IRSA…"):
-                            fig = vista_recorte_asteroide(resultados.iloc[indice].to_dict(), 4)
-                        st.pyplot(fig, clear_figure=True)
-                        plt.close(fig)
-                        st.caption("El círculo marca la posición prevista de Vesta "
-                                   "por la efeméride; no constituye una detección del asteroide.")
-                    except Exception as error:
-                        st.warning("No se pudo mostrar este recorte. Puede que IRSA "
-                                   "esté ocupado o que la URL no admita recortes.")
-                        with st.expander("Detalles técnicos"):
-                            st.code(f"{type(error).__name__}: {error}")
-    st.link_button("Abrir MOST directamente en NASA/IPAC",
-                   "https://irsa.ipac.caltech.edu/applications/MOST/")
-    st.info("Para generar un GIF de un asteroide sobre el **mismo campo fijo**, "
-            "todavía debemos seleccionar exposiciones suficientemente cercanas en "
-            "tiempo y longitud de onda, y comprobar la fuente contra el fondo.")
+            st.caption("Este gráfico utiliza las efemérides de MOST, no centroides "
+                       "obtenidos de los píxeles.")
+
+        st.markdown("#### Información de las exposiciones")
+        st.dataframe(r["tabla"], hide_index=True, use_container_width=True)
+        st.download_button("Descargar tabla (CSV)",
+                           r["tabla"].to_csv(index=False).encode("utf-8"),
+                           file_name="planeta9_asteroides.csv", mime="text/csv")
+        if r["banda_comparable"] is False:
+            st.warning("Las longitudes de onda de estas exposiciones difieren demasiado "
+                       "para comparar sus intensidades como si fueran la misma banda. "
+                       "La secuencia es solo una visualización espacial.")
+        elif r["banda_comparable"] is None:
+            st.info("No se pudo verificar completamente la compatibilidad espectral; "
+                    "la secuencia no demuestra cambios de brillo.")
+        if r["errores"]:
+            st.warning(f"Se omitieron {len(r['errores'])} recortes que no pudieron procesarse.")
+            with st.expander("Detalles de las descargas omitidas"):
+                for mensaje in r["errores"]:
+                    st.caption(mensaje)
+
+    else:
+        with st.expander("Ver exposiciones encontradas (sin descargar FITS)"):
+            vista_ast = df_ast[["fecha", "detector", "ra_deg", "dec_deg", "imagen_id"]].copy()
+            vista_ast.columns = ["Fecha UTC", "Detector", "RA prevista (°)",
+                                  "Dec prevista (°)", "Imagen"]
+            st.dataframe(vista_ast, hide_index=True, use_container_width=True)
+
+    st.divider()
+    st.caption("Fuente: NASA/IPAC IRSA MOST + imágenes SPHEREx. Esta herramienta "
+               "no confirma detecciones de asteroides ni mide sus órbitas. "
+               "Los recortes están centrados en efemérides y no en un fondo fijo.")
+    st.link_button("Abrir MOST directamente", "https://irsa.ipac.caltech.edu/applications/MOST/")
     st.stop()
 
 if pagina == "El proyecto":
@@ -583,9 +693,9 @@ if pagina == "El proyecto":
              "una búsqueda automatizada ni valida candidatos de planetas lejanos.")
     st.markdown("**¿Y los asteroides?**")
     st.write("Los asteroides cambian rápidamente de coordenadas. Para estudiarlos, "
-             "usamos la herramienta MOST de IRSA, que consulta las posiciones previstas "
-             "y busca imágenes de SPHEREx que cubren esos lugares. Puedes probarlo "
-             "en la sección Asteroides; aún no es un detector de objetos en movimiento.")
+             "usamos MOST de IRSA para buscar las exposiciones de SPHEREx que cubren "
+             "sus posiciones previstas y generar recortes reales centrados en ellas. "
+             "Es un seguimiento visual por efemérides, no una detección confirmada.")
     st.link_button("Explorar objetos móviles en IRSA MOST", "https://irsa.ipac.caltech.edu/applications/MOST/")
     st.caption("Realizado por el equipo Planeta 9 para NASA Space Apps Challenge 2026. "
                "Datos: NASA/IPAC IRSA, colecciones SPHEREx DR1 + QR3.")
