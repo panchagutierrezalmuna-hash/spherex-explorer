@@ -1,0 +1,9 @@
+streamlit>=1.50
+numpy
+pandas
+pillow>=9.1
+matplotlib
+requests
+astropy
+astroquery
+reproject
