@@ -266,7 +266,7 @@ if pagina == "El proyecto":
              "una búsqueda automatizada ni valida candidatos de planetas lejanos.")
     st.markdown("**¿Y los asteroides?**")
     st.write("Para seguir un objeto que se desplaza por el sistema solar hay que calcular su "
-             "posición en cada fecha. Es una extensión futura; por ahora las búsquedas libres "
+             "posición en cada fecha. Es una extensión futura, por ahora las búsquedas libres "
              "utilizan coordenadas fijas.")
     st.link_button("Explorar objetos móviles en IRSA MOST", "https://irsa.ipac.caltech.edu/applications/MOST/")
     st.caption("Realizado por el equipo Planeta 9 para NASA Space Apps Challenge 2026. "
