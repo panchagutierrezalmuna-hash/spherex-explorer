@@ -32,7 +32,8 @@ def _normalizacion(datos, mascara=None):
     return ImageNormalize(vmin=minimo, vmax=maximo, stretch=AsinhStretch())
 
 
-def crear_comparaciones(grupo, comun, wcs_salida, ruta_gif, detector):
+def crear_comparaciones(grupo, comun, wcs_salida, ruta_gif, detector,
+                        objeto_movil=None):
     """Genera PNGs para las mismas épocas del GIF. Retorna rutas de ambos."""
     n = len(grupo)
     filas, columnas = _rejilla(n)
@@ -40,6 +41,13 @@ def crear_comparaciones(grupo, comun, wcs_salida, ruta_gif, detector):
     base.parent.mkdir(parents=True, exist_ok=True)
     ruta_inicial = base.with_name(base.stem + '_inicial.png')
     ruta_alineada = base.with_name(base.stem + '_alineada.png')
+
+    # Para Barnard, calcular la posición esperada en cada fecha (no un centroide medido).
+    posiciones = None
+    if objeto_movil == "Barnard":
+        from astropy.time import Time
+        from spherex_moviles import barnard_en
+        posiciones = [barnard_en(Time(d["t_min"], format="mjd")) for d in grupo]
 
     # Imágenes originales: cada observación conserva su propia orientación WCS.
     fig = plt.figure(figsize=(4.8 * columnas, 4.35 * filas))
@@ -53,6 +61,10 @@ def crear_comparaciones(grupo, comun, wcs_salida, ruta_gif, detector):
         norma = _normalizacion(imagen)
         ax.imshow(np.ma.masked_invalid(imagen), origin='lower', cmap=mapa,
                   norm=norma, interpolation='nearest')
+        if posiciones is not None:
+            px, py = wcs.world_to_pixel(posiciones[i - 1])
+            ax.scatter([px], [py], s=200, facecolors='none',
+                       edgecolors='#62ecff', linewidths=1.6)
         ax.set_title(f"{d['fecha_utc'][:10]} · λ {d['meta']['lambda_um']:.3f} µm", fontsize=11)
         ax.set_xlabel('RA')
         ax.set_ylabel('Dec')
@@ -73,6 +85,10 @@ def crear_comparaciones(grupo, comun, wcs_salida, ruta_gif, detector):
         imagen_alineada = np.ma.masked_where(~comun, d['imagen'])
         ax.imshow(imagen_alineada, origin='lower', cmap=mapa,
                   norm=norma, interpolation='nearest')
+        if posiciones is not None:
+            px, py = wcs_salida.world_to_pixel(posiciones[i - 1])
+            ax.scatter([px], [py], s=200, facecolors='none',
+                       edgecolors='#62ecff', linewidths=1.6)
         ax.set_title(f"{d['fecha_utc'][:10]} · λ {d['meta']['lambda_um']:.3f} µm", fontsize=11)
         ax.set_xlabel('RA')
         ax.set_ylabel('Dec')

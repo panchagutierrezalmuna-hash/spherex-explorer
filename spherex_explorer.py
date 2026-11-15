@@ -247,7 +247,8 @@ def _seleccionar_secuencia(datos: list[dict], max_epocas: int = 5,
 
 
 def _crear_gif(grupo: list[dict], comun: np.ndarray, wcs_salida: WCS,
-                ruta_gif: str | Path, detector: str, fps: float = 1.0):
+                ruta_gif: str | Path, detector: str, fps: float = 1.0,
+                objeto_movil: str | None = None):
     pixeles = np.concatenate([d["imagen"][comun] for d in grupo])
     pixeles = pixeles[np.isfinite(pixeles)]
     if len(pixeles) < 10:
@@ -269,11 +270,25 @@ def _crear_gif(grupo: list[dict], comun: np.ndarray, wcs_salida: WCS,
     ax.coords[1].set_axislabel("Declinación (Dec)")
     ax.coords.grid(color="white", alpha=0.2, linestyle=":")
     titulo = ax.set_title("")
+    marcador = None
+    if objeto_movil == "Barnard":
+        from spherex_moviles import barnard_en
+        primero = barnard_en(Time(grupo[0]["t_min"], format="mjd"))
+        x, y = wcs_salida.world_to_pixel(primero)
+        marcador = ax.scatter([x], [y], s=270, facecolors="none",
+                             edgecolors="#60edff", linewidths=1.7, zorder=10)
+        ax.text(.02, .03, "○ Posición prevista de Barnard · catálogo",
+                color="#60edff", fontsize=9, transform=ax.transAxes,
+                bbox={"facecolor": "#0b152b", "alpha": .75, "edgecolor": "none"})
     fig.colorbar(im, ax=ax, shrink=0.78, label=f"Intensidad ({grupo[0]['meta']['unidad']})")
 
     def actualizar(i):
         d = grupo[i]
         im.set_data(cuadros[i])
+        if marcador is not None:
+            estrella = barnard_en(Time(d["t_min"], format="mjd"))
+            x, y = wcs_salida.world_to_pixel(estrella)
+            marcador.set_offsets(np.array([[x, y]]))
         titulo.set_text(f"SPHEREx {detector} · {d['fecha_utc'][:10]} UTC\n"
                        f"λ ≈ {d['meta']['lambda_um']:.4f} µm")
         return im, titulo
@@ -295,7 +310,8 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
                     separacion_dias: float = 15,
                     carpeta: str | Path = "datos_spherex",
                     salida: str | Path | None = None,
-                    mostrar_progreso: bool = True) -> dict:
+                    mostrar_progreso: bool = True,
+                    objeto_movil: str | None = None) -> dict:
     """Ejecuta consulta SIA2, recortes FITS, compatibilidad y GIF RA/Dec.
 
     La salida contiene: archivo_gif, observaciones (DataFrame),
@@ -303,6 +319,8 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
     fraccion_ancho, rango_lambda_um, detector y advertencia.
     """
     ra, dec, fov_arcmin, detector = _validar_entrada(ra, dec, fov_arcmin, detector)
+    if objeto_movil not in (None, "Barnard"):
+        raise ValueError("El seguimiento móvil solo está habilitado para Barnard.")
     max_epocas = int(max_epocas)
     if not (2 <= max_epocas <= 12):
         raise ValueError("max_epocas debe estar entre 2 y 12.")
@@ -339,9 +357,10 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
         datos, max_epocas=max_epocas, separacion_dias=separacion_dias
     )
     if salida is None:
-        identificador = sha256(f"{ra:.8f}|{dec:.8f}|{fov_arcmin:.4f}|{detector}|{max_epocas}|{max_por_ventana}".encode()).hexdigest()[:12]
+        identificador = sha256(f"{ra:.8f}|{dec:.8f}|{fov_arcmin:.4f}|{detector}|{max_epocas}|{max_por_ventana}|{objeto_movil}".encode()).hexdigest()[:12]
         salida = Path("resultados_spherex") / f"blink_{detector}_{identificador}.gif"
-    gif = _crear_gif(grupo, comun, wcs_salida, salida, detector)
+    gif = _crear_gif(grupo, comun, wcs_salida, salida, detector,
+                     objeto_movil=objeto_movil)
     # Las figuras son una ayuda visual opcional: un fallo en ellas no debe
     # descartar una animación científica ya generada correctamente.
     ruta_inicial = ruta_alineada = None
@@ -349,7 +368,8 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
     try:
         from spherex_figuras import crear_comparaciones
         ruta_inicial, ruta_alineada = crear_comparaciones(
-            grupo, comun, wcs_salida, gif, detector
+            grupo, comun, wcs_salida, gif, detector,
+            objeto_movil=objeto_movil
         )
     except Exception as exc:
         error_figuras = str(exc)
@@ -374,6 +394,7 @@ def explorar_region(ra: float, dec: float, fov_arcmin: float = 6,
         "fraccion_ancho": frac,
         "rango_lambda_um": float(tabla["lambda_um"].max() - tabla["lambda_um"].min()),
         "detector": detector,
+        "objeto_movil": objeto_movil,
         "advertencia": ("Las imágenes provienen de observaciones reales tomadas en distintas fechas. "
                     "Aunque elegimos bandas parecidas, las diferencias visuales por sí solas "
                     "no permiten confirmar cambios físicos en los objetos."),

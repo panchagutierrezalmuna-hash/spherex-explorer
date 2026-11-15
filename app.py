@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import base64
 import threading
+from datetime import date
+
+import pandas as pd
+import matplotlib.pyplot as plt
 from pathlib import Path
 
 import streamlit as st
 
 from spherex_explorer import explorar_region
+from spherex_moviles import barnard_en, consultar_asteroide, figura_posiciones, vista_recorte_asteroide
 
 st.set_page_config(page_title="Planeta 9 · SPHEREx Motion Explorer",
                    page_icon="🌌", layout="wide",
@@ -49,8 +54,8 @@ OBJETOS = {
     "Estrella de Barnard": {
         "id": "Barnard", "ra": 269.452075, "dec": 4.693391,
         "tipo": "Estrella cercana", "descripcion": (
-            "Su movimiento propio es notable. La búsqueda libre usa coordenadas fijas: "
-            "para seguir la estrella, utiliza la demostración preparada del equipo."
+            "Como esta estrella se desplaza rápidamente por el cielo, usamos su "
+            "posición prevista para finales de 2025 y la marcamos en cada observación."
         ),
     },
     "R Draconis · Estrella variable": {
@@ -82,6 +87,12 @@ DEMO_FIGURAS = {
         "Comparación alineada": ["demos/R_Draconis_alineada.png"],
     },
 }
+# Barnard no está en 2025/2026 donde figuraba en el catálogo J2000.
+# Propagamos su astrometría a la mitad del período SPHEREx explorado.
+_BARNARD_REFERENCIA = barnard_en("2025-12-01")
+OBJETOS["Estrella de Barnard"]["ra"] = _BARNARD_REFERENCIA.ra.deg
+OBJETOS["Estrella de Barnard"]["dec"] = _BARNARD_REFERENCIA.dec.deg
+
 CUSTOM = "— Introducir coordenadas —"
 
 
@@ -125,13 +136,15 @@ def _bloqueo_graficos():
 
 
 @st.cache_data(ttl=1800, max_entries=6, show_spinner=False)
-def _consultar(ra, dec, fov, detector, max_epocas):
+def _consultar(ra, dec, fov, detector, max_epocas, es_barnard=False):
     """Cachea bytes, no solo rutas efímeras de Streamlit Cloud."""
     with _bloqueo_graficos():
         res = explorar_region(ra=ra, dec=dec, fov_arcmin=fov,
                               detector=detector, max_epocas=max_epocas,
-                              max_por_ventana=3, separacion_dias=15,
-                              mostrar_progreso=False)
+                              max_por_ventana=5 if es_barnard else 3,
+                              separacion_dias=15,
+                              mostrar_progreso=False,
+                              objeto_movil="Barnard" if es_barnard else None)
         for clave, destino in [
             ("archivo_gif", "gif_bytes"),
             ("archivo_comparacion_inicial", "inicial_bytes"),
@@ -216,16 +229,17 @@ st.session_state.setdefault("pagina", "Explorar el cielo")
 with st.sidebar:
     st.markdown('<div class="team-sidebar">✦ Planeta 9</div>', unsafe_allow_html=True)
     st.caption("NASA Space Apps Challenge 2026")
-    st.radio("Menú", ["Explorar el cielo", "Objetos para probar", "El proyecto"],
+    st.radio("Menú", ["Explorar el cielo", "Objetos para probar",
+                       "Galería del equipo", "Asteroides", "El proyecto"],
              key="pagina", label_visibility="collapsed")
     st.divider()
     st.caption("Imágenes reales de SPHEREx · NASA/IPAC IRSA")
-    st.caption("Este proyecto explora observaciones, no anuncia detecciones confirmadas.")
+    st.caption("Este proyecto explora observaciones; no anuncia detecciones confirmadas.")
 
 st.markdown('''<section class="hero-panel">
     <span class="team-tag">✦ PLANETA 9</span>
     <div class="hero-eyebrow">NASA SPACE APPS CHALLENGE · 2026</div>
-    <div class="hero-title">El cielo siempre está cambiando<br><em>¡Vamos a explorarlo!</em></div>
+    <div class="hero-title">El cielo siempre está cambiando.<br><em>¡Vamos a explorarlo!</em></div>
     <div class="hero-desc">Elige una región del cielo y compárala en diferentes fechas.
        Usamos imágenes infrarrojas reales del telescopio espacial SPHEREx para crear
        una pequeña película del universo.</div>
@@ -250,6 +264,116 @@ if pagina == "Objetos para probar":
     st.info("Las coordenadas son referencias para la búsqueda. Un recorte no equivale a una detección del objeto.")
     st.stop()
 
+if pagina == "Galería del equipo":
+    st.header("Las animaciones de Planeta 9")
+    st.write("Aquí reuniremos los GIF que ya preparó el equipo con datos reales "
+             "de SPHEREx. Se muestran tal como fueron creados, con sus títulos originales. "
+             "No necesitan consultar IRSA cada vez.")
+    nombres = ["M101", "Barnard", "R_Draconis"]
+    etiquetas = {"M101": "M101 · Galaxia del Molinete",
+                 "Barnard": "Estrella de Barnard",
+                 "R_Draconis": "R Draconis · Estrella variable"}
+    cargados = [k for k in nombres if _buscar_archivo(DEMO_GIF.get(k, []))]
+    if not cargados:
+        st.info("Todavía no subimos los GIF de tu compañero. Cuando nos los entregue, "
+                "los guardaremos en `demos/` y aparecerán aquí automáticamente.")
+        st.markdown("**Archivos esperados:** `demos/M101.gif`, `demos/Barnard.gif` "
+                    "y `demos/R_Draconis.gif`.")
+    else:
+        clave = st.selectbox("Elige una demostración", cargados,
+                             format_func=lambda x: etiquetas[x])
+        archivo = _buscar_archivo(DEMO_GIF[clave])
+        st.image(archivo.read_bytes(), caption=etiquetas[clave] + " · Animación del equipo",
+                 use_container_width=True)
+        st.download_button("Descargar esta animación", archivo.read_bytes(),
+                           file_name=archivo.name, mime="image/gif")
+        figuras = DEMO_FIGURAS.get(clave, {})
+        disponibles = [(titulo, ruta) for titulo, opciones in figuras.items()
+                       if (ruta := _buscar_archivo(opciones)) is not None]
+        if disponibles:
+            st.subheader("Figuras del análisis original")
+            pestañas = st.tabs([nombre for nombre, _ in disponibles])
+            for pestaña, (titulo, ruta) in zip(pestañas, disponibles):
+                with pestaña:
+                    st.image(ruta.read_bytes(), caption=titulo, use_container_width=True)
+        st.caption("Estas imágenes fueron preparadas con datos reales. "
+                   "No son el resultado de una consulta nueva.")
+    st.stop()
+
+if pagina == "Asteroides":
+    st.header("Tras la pista de un asteroide")
+    st.write("Los asteroides se desplazan respecto al fondo de estrellas. A diferencia "
+             "de las galaxias, no basta con buscar una única RA y Dec: necesitamos "
+             "saber dónde se esperaba el objeto en cada fecha.")
+    st.write("Usamos **MOST**, el servicio de NASA/IPAC que combina efemérides "
+             "de objetos del sistema solar con el archivo SPHEREx.")
+    st.caption("Primera demostración experimental: (4) Vesta. "
+               "No estamos midiendo su movimiento directamente desde los píxeles.")
+    c1, c2 = st.columns(2)
+    with c1:
+        inicio = st.date_input("Desde", date(2025, 8, 1),
+                               min_value=date(2025, 1, 1), max_value=date.today())
+    with c2:
+        fin = st.date_input("Hasta", date(2025, 8, 31),
+                            min_value=date(2025, 1, 1), max_value=date.today())
+    if inicio > fin:
+        st.error("La fecha de inicio debe ser anterior a la fecha final.")
+        st.stop()
+    @st.cache_data(ttl=3600, show_spinner=False, max_entries=5)
+    def _most_vesta(a, b):
+        return consultar_asteroide("20000004", a, b)
+
+    if st.button("☄️ Buscar observaciones de Vesta", type="primary"):
+        try:
+            with st.spinner("Consultando efemérides y observaciones de Vesta en IRSA MOST…"):
+                st.session_state["most_vesta"] = _most_vesta(inicio.isoformat(), fin.isoformat())
+                st.session_state["most_vesta_periodo"] = (inicio.isoformat(), fin.isoformat())
+        except Exception as error:
+            st.session_state.pop("most_vesta", None)
+            st.error("MOST no respondió o no pudo completar la búsqueda. "
+                     "Puedes volver a intentarlo.")
+            with st.expander("Detalles técnicos"):
+                st.code(f"{type(error).__name__}: {error}")
+    resultados = st.session_state.get("most_vesta")
+    if st.session_state.get("most_vesta_periodo") != (inicio.isoformat(), fin.isoformat()):
+        resultados = None
+    if resultados is not None:
+        if resultados.empty:
+            st.info("MOST no encontró imágenes coincidentes en ese período.")
+        else:
+            st.metric("Exposiciones que coinciden con la efeméride", len(resultados))
+            st.caption("Cada punto del gráfico es una posición **prevista**, no un "
+                       "asteroide detectado automáticamente en la imagen.")
+            fig = figura_posiciones(resultados)
+            if fig is not None:
+                st.pyplot(fig, clear_figure=True)
+                plt.close(fig)
+            vista = resultados[["fecha", "ra_deg", "dec_deg", "imagen_id"]].copy()
+            vista.columns = ["Fecha UTC", "RA prevista (°)", "Dec prevista (°)", "Imagen"]
+            st.dataframe(vista, hide_index=True, use_container_width=True)
+            with st.expander("Ver un recorte real de una exposición (experimental)"):
+                indice = st.selectbox("Observación", list(range(len(resultados))),
+                                     format_func=lambda i: f"{i + 1} · {resultados.iloc[i]['fecha']}")
+                if st.button("Mostrar recorte FITS de Vesta"):
+                    try:
+                        with st.spinner("Descargando recorte desde IRSA…"):
+                            fig = vista_recorte_asteroide(resultados.iloc[indice].to_dict(), 4)
+                        st.pyplot(fig, clear_figure=True)
+                        plt.close(fig)
+                        st.caption("El círculo marca la posición prevista de Vesta "
+                                   "por la efeméride; no constituye una detección del asteroide.")
+                    except Exception as error:
+                        st.warning("No se pudo mostrar este recorte. Puede que IRSA "
+                                   "esté ocupado o que la URL no admita recortes.")
+                        with st.expander("Detalles técnicos"):
+                            st.code(f"{type(error).__name__}: {error}")
+    st.link_button("Abrir MOST directamente en NASA/IPAC",
+                   "https://irsa.ipac.caltech.edu/applications/MOST/")
+    st.info("Para generar un GIF de un asteroide sobre el **mismo campo fijo**, "
+            "todavía debemos seleccionar exposiciones suficientemente cercanas en "
+            "tiempo y longitud de onda, y comprobar la fuente contra el fondo.")
+    st.stop()
+
 if pagina == "El proyecto":
     st.header("¿Cómo funciona?")
     st.write("SPHEREx observa el cielo en el infrarrojo. Aquí puedes seleccionar un punto "
@@ -265,24 +389,30 @@ if pagina == "El proyecto":
     st.write("Todavía no. Esta versión permite explorar imágenes y posibles cambios, pero no hace "
              "una búsqueda automatizada ni valida candidatos de planetas lejanos.")
     st.markdown("**¿Y los asteroides?**")
-    st.write("Para seguir un objeto que se desplaza por el sistema solar hay que calcular su "
-             "posición en cada fecha. Es una extensión futura, por ahora las búsquedas libres "
-             "utilizan coordenadas fijas.")
+    st.write("Los asteroides cambian rápidamente de coordenadas. Para estudiarlos, "
+             "usamos la herramienta MOST de IRSA, que consulta las posiciones previstas "
+             "y busca imágenes de SPHEREx que cubren esos lugares. Puedes probarlo "
+             "en la sección Asteroides; aún no es un detector de objetos en movimiento.")
     st.link_button("Explorar objetos móviles en IRSA MOST", "https://irsa.ipac.caltech.edu/applications/MOST/")
     st.caption("Realizado por el equipo Planeta 9 para NASA Space Apps Challenge 2026. "
                "Datos: NASA/IPAC IRSA, colecciones SPHEREx DR1 + QR3.")
     st.stop()
 
 st.header("01 / Elige una región")
-st.write("Prueba con un objeto conocido o introduce coordenadas nuevas. "
-         "Si tenemos una animación preparada, verás el GIF original al elegir el objeto; "
-         "para crear una animación nueva, usa el botón de consulta.")
+st.write("Elige un objeto conocido o escribe otras coordenadas. "
+         "Con el botón de búsqueda procesamos imágenes reales de SPHEREx. "
+         "Los GIF preparados por el equipo están en la **Galería del equipo**.")
 st.selectbox("Objeto de referencia", [CUSTOM, *OBJETOS.keys()], key="ejemplo",
              on_change=_actualizar_ejemplo,
              help="Los nombres sirven para rellenar las coordenadas; la búsqueda siempre usa RA y Dec.")
 seleccionado = OBJETOS.get(st.session_state.ejemplo)
 if seleccionado:
     st.caption(seleccionado["descripcion"])
+    if seleccionado["id"] == "Barnard":
+        st.info("Barnard se desplaza unos 10,4″ por año. "
+                "Las coordenadas del buscador están propagadas al 01-12-2025 "
+                "(no son las originales J2000). El círculo cian en las figuras "
+                "indica su posición esperada en cada fecha, no una detección medida.")
 
 izq, der = st.columns(2)
 with izq:
@@ -310,10 +440,7 @@ st.markdown('<div class="small-note">Las consultas son reales y pueden tardar. '
             'Si la aplicación completa se detiene, vuelve a abrirla.</div>',
             unsafe_allow_html=True)
 
-# Al seleccionar un objeto del catálogo, su GIF original (si fue subido a
-# demos/) se muestra automáticamente en la zona de resultados. El botón de
-# búsqueda SIEMPRE lanza nuestra consulta en vivo mediante explorar_region().
-ruta_demo = _buscar_archivo(DEMO_GIF.get(seleccionado["id"], [])) if seleccionado else None
+# El buscador consulta siempre IRSA; las demos viven en la galería independiente.
 consultar = st.button("🔭 Explorar esta región en IRSA", type="primary", use_container_width=True)
 
 if consultar:
@@ -322,7 +449,8 @@ if consultar:
         with st.spinner("Buscando observaciones en IRSA y preparando la comparación…"):
             resultado = _consultar(ra_elegida, dec_elegida,
                                   float(st.session_state.fov), st.session_state.detector,
-                                  max_epocas)
+                                  max_epocas,
+                                  es_barnard=bool(seleccionado and seleccionado["id"] == "Barnard"))
         st.session_state.resultado = {
             "tipo": "consulta", "data": resultado, "ra": ra_elegida, "dec": dec_elegida,
             "fov": float(st.session_state.fov),
@@ -342,44 +470,14 @@ if consultar:
             st.code(f"{type(exc).__name__}: {mensaje}")
 
 resultado_actual = st.session_state.resultado
-# Vista previa automática, igual que en el buscador original: el usuario
-# selecciona el objeto y aparece su GIF previamente preparado. No se confunde
-# con los resultados de la consulta en vivo ni depende del detector elegido.
-if resultado_actual is None and not consultar and ruta_demo is not None and seleccionado:
-    resultado_actual = {
-        "tipo": "demo", "nombre": seleccionado["id"],
-        "titulo": st.session_state.ejemplo,
-        "gif": ruta_demo.read_bytes(),
-    }
 if resultado_actual is None:
     st.divider()
-    st.info("Escribe unas coordenadas y pulsa «Explorar esta región en IRSA» para crear una animación. "
-            "Si eliges un objeto con un GIF ya preparado por el equipo, aparecerá aquí automáticamente.")
+    st.info("Introduce unas coordenadas y pulsa «Explorar esta región en IRSA». "
+            "Para ver los GIF originales del equipo, abre **Galería del equipo** en el menú.")
     st.stop()
 
 st.divider()
 st.header("02 / El cielo en movimiento")
-if resultado_actual["tipo"] == "demo":
-    st.image(resultado_actual["gif"], caption=f"{resultado_actual['titulo']} · Trabajo del equipo Planeta 9",
-             use_container_width=True)
-    st.download_button("Descargar GIF", resultado_actual["gif"],
-                       file_name=f"{resultado_actual['nombre']}.gif", mime="image/gif")
-    st.caption("Animación preparada por el equipo a partir de datos reales de SPHEREx. "
-               "No es una consulta en vivo; si quieres generar otra secuencia para estas "
-               "coordenadas, pulsa «Explorar esta región en IRSA» arriba. "
-               "El detector y otros controles corresponden a la búsqueda en vivo.")
-    figuras = DEMO_FIGURAS.get(resultado_actual["nombre"], {})
-    disponibles = [(nombre, ruta) for nombre, opciones in figuras.items()
-                   if (ruta := _buscar_archivo(opciones)) is not None]
-    if disponibles:
-        st.header("03 / Otras vistas de este objeto")
-        tabs = st.tabs([nombre for nombre, _ in disponibles])
-        for tab, (nombre, ruta) in zip(tabs, disponibles):
-            with tab:
-                st.image(str(ruta), caption=f"{nombre} · Análisis preparado por el equipo",
-                         use_container_width=True)
-    st.stop()
-
 res = resultado_actual["data"]
 if res.get("gif_bytes"):
     st.image(res["gif_bytes"],
@@ -391,6 +489,11 @@ if res.get("gif_bytes"):
                        file_name="planeta9_spherex.gif", mime="image/gif")
 else:
     st.warning("No se pudo recuperar el GIF de esta consulta.")
+
+if res.get("objeto_movil") == "Barnard":
+    st.caption("⭕ Círculo cian: posición esperada de la estrella de Barnard "
+               "a partir de su movimiento propio catalogado; "
+               "no equivale a una detección ni a un movimiento medido.")
 
 # Ambas imágenes provienen de las mismas épocas seleccionadas, no de otro algoritmo.
 if res.get("inicial_bytes") and res.get("alineada_bytes"):
