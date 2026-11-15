@@ -70,9 +70,9 @@ OBJETOS = {
 }
 
 DEMO_GIF = {
-    "M101": ["demos/M101.gif", "demos/M101_blink.gif", "05_Analisis/M101_blink.gif"],
-    "Barnard": ["demos/Barnard.gif", "demos/Barnard_blink.gif", "05_Analisis/Barnard_blink.gif"],
-    "R_Draconis": ["demos/R_Draconis.gif", "demos/RDraconis.gif", "demos/R_Draconis_blink.gif", "05_Analisis/R_Draconis_blink.gif"],
+    "M101": ["demo/M101.gif"],
+    "Barnard": ["demo/Barnard.gif"],
+    "R_Draconis": ["demo/R_Draconis.gif"],
 }
 # Buscamos los GIF originales en la carpeta demos/.
 # Otras rutas se conservan por compatibilidad con la página original.
