@@ -143,8 +143,9 @@ def _consultar(ra, dec, fov, detector, max_epocas, es_barnard=False):
                               detector=detector, max_epocas=max_epocas,
                               max_por_ventana=5 if es_barnard else 3,
                               separacion_dias=15,
-                              mostrar_progreso=False,
-                              objeto_movil="Barnard" if es_barnard else None)
+                              mostrar_progreso=False
+                          )
+
         for clave, destino in [
             ("archivo_gif", "gif_bytes"),
             ("archivo_comparacion_inicial", "inicial_bytes"),
