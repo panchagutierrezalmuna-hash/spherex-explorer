@@ -220,7 +220,7 @@ with st.sidebar:
              key="pagina", label_visibility="collapsed")
     st.divider()
     st.caption("Imágenes reales de SPHEREx · NASA/IPAC IRSA")
-    st.caption("Este proyecto explora observaciones; no anuncia detecciones confirmadas.")
+    st.caption("Este proyecto explora observaciones, no anuncia detecciones confirmadas.")
 
 st.markdown('''<section class="hero-panel">
     <span class="team-tag">✦ PLANETA 9</span>
