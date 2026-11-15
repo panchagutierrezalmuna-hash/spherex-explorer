@@ -7,6 +7,7 @@ por el equipo, y no se presentan como búsquedas en vivo.
 from __future__ import annotations
 
 import base64
+import json
 import threading
 from datetime import date
 
@@ -72,6 +73,13 @@ DEMO_GIF = {
     "Barnard": ["demos/Barnard.gif", "05_Analisis/Barnard_blink.gif"],
     "R_Draconis": ["demos/R_Draconis.gif", "05_Analisis/R_Draconis_blink.gif"],
 }
+# Los notebooks se pueden LEER en la web, sin ejecutar consultas ni depender de IRSA.
+DEMO_NOTEBOOKS = {
+    "M101": ["demos/M101_SPHEREx_multiples.ipynb"],
+    "Barnard": ["demos/Barnard_SPHEREx_autonomo.ipynb"],
+    "R_Draconis": ["demos/R_Draconis.ipynb"],
+}
+
 DEMO_FIGURAS = {
     "M101": {
         "Comparación inicial": ["demos/M101_inicial.png", "M101_D2_comparacion_inicial.png"],
@@ -266,39 +274,116 @@ if pagina == "Objetos para probar":
     st.stop()
 
 if pagina == "Galería del equipo":
-    st.header("Las animaciones de Planeta 9")
-    st.write("Aquí reuniremos los GIF que ya preparó el equipo con datos reales "
-             "de SPHEREx. Se muestran tal como fueron creados, con sus títulos originales. "
-             "No necesitan consultar IRSA cada vez.")
+    st.header("✦ Exploraciones destacadas")
+    st.write(
+        "Estas son las exploraciones que preparamos como equipo antes de abrir el "
+        "buscador a cualquier punto del cielo. Puedes conocer el código del análisis "
+        "y, cuando estén subidas, ver las animaciones originales y sus comparaciones."
+    )
+    st.caption("Esta sección funciona sin consultar IRSA. Los notebooks se muestran, no se ejecutan.")
+
     nombres = ["M101", "Barnard", "R_Draconis"]
-    etiquetas = {"M101": "M101 · Galaxia del Molinete",
-                 "Barnard": "Estrella de Barnard",
-                 "R_Draconis": "R Draconis · Estrella variable"}
-    cargados = [k for k in nombres if _buscar_archivo(DEMO_GIF.get(k, []))]
-    if not cargados:
-        st.info("Todavía no subimos los GIF de tu compañero. Cuando nos los entregue, "
-                "los guardaremos en `demos/` y aparecerán aquí automáticamente.")
-        st.markdown("**Archivos esperados:** `demos/M101.gif`, `demos/Barnard.gif` "
-                    "y `demos/R_Draconis.gif`.")
+    etiquetas = {
+        "M101": "M101 · Galaxia del Molinete",
+        "Barnard": "Estrella de Barnard",
+        "R_Draconis": "R Draconis · Estrella variable",
+    }
+    descripciones = {
+        "M101": "Una galaxia espiral observada en distintas fechas.",
+        "Barnard": "Una estrella cercana con un movimiento propio excepcional.",
+        "R_Draconis": "Una estrella variable que podemos comparar en el infrarrojo.",
+    }
+    presentaciones = st.columns(3)
+    for columna, clave in zip(presentaciones, nombres):
+        with columna:
+            with st.container(border=True):
+                st.markdown(f"**{etiquetas[clave]}**")
+                st.caption(descripciones[clave])
+                gif_existe = _buscar_archivo(DEMO_GIF.get(clave, [])) is not None
+                nb_existe = _buscar_archivo(DEMO_NOTEBOOKS.get(clave, [])) is not None
+                if gif_existe:
+                    st.caption("🎞️ Animación disponible")
+                elif nb_existe:
+                    st.caption("📓 Notebook disponible · falta subir GIF")
+                else:
+                    st.caption("Próximamente")
+
+    disponibles = [
+        k for k in nombres
+        if (_buscar_archivo(DEMO_GIF.get(k, [])) is not None
+            or _buscar_archivo(DEMO_NOTEBOOKS.get(k, [])) is not None)
+    ]
+
+    if not disponibles:
+        st.info("Aún faltan los archivos de las exploraciones. Sube los notebooks o GIF a `demos/` en GitHub.")
     else:
-        clave = st.selectbox("Elige una demostración", cargados,
-                             format_func=lambda x: etiquetas[x])
-        archivo = _buscar_archivo(DEMO_GIF[clave])
-        st.image(archivo.read_bytes(), caption=etiquetas[clave] + " · Animación del equipo",
-                 use_container_width=True)
-        st.download_button("Descargar esta animación", archivo.read_bytes(),
-                           file_name=archivo.name, mime="image/gif")
-        figuras = DEMO_FIGURAS.get(clave, {})
-        disponibles = [(titulo, ruta) for titulo, opciones in figuras.items()
-                       if (ruta := _buscar_archivo(opciones)) is not None]
-        if disponibles:
-            st.subheader("Figuras del análisis original")
-            pestañas = st.tabs([nombre for nombre, _ in disponibles])
-            for pestaña, (titulo, ruta) in zip(pestañas, disponibles):
-                with pestaña:
-                    st.image(ruta.read_bytes(), caption=titulo, use_container_width=True)
-        st.caption("Estas imágenes fueron preparadas con datos reales. "
-                   "No son el resultado de una consulta nueva.")
+        clave = st.selectbox("Elige una exploración", disponibles,
+                             format_func=lambda k: etiquetas[k])
+        gif = _buscar_archivo(DEMO_GIF.get(clave, []))
+        notebook = _buscar_archivo(DEMO_NOTEBOOKS.get(clave, []))
+
+        # El usuario puede leer ya sus notebooks aun cuando el archivo GIF no exista.
+        opciones = ["🎞️ Ver animación", "📓 Ver notebook"]
+        elegir = st.radio("¿Qué quieres ver?", opciones, horizontal=True,
+                          index=0 if gif is not None else 1,
+                          key=f"vista_destacada_{clave}")
+
+        if elegir == "🎞️ Ver animación":
+            if gif is None:
+                st.info("Todavía no tenemos el GIF exportado de esta exploración. "
+                        "El archivo `.ipynb` contiene el código, pero no la animación guardada.")
+                st.caption(f"Cuando esté disponible, sube `demos/{clave}.gif` a GitHub. "
+                           "La galería lo reconocerá automáticamente.")
+            else:
+                st.image(gif.read_bytes(), caption=etiquetas[clave] + " · Animación del equipo",
+                         use_container_width=True)
+                st.download_button("⬇️ Descargar GIF", gif.read_bytes(), file_name=gif.name,
+                                   mime="image/gif", key=f"gif_{clave}")
+                figuras = DEMO_FIGURAS.get(clave, {})
+                disponibles_fig = [
+                    (titulo, ruta) for titulo, opciones_fig in figuras.items()
+                    if (ruta := _buscar_archivo(opciones_fig)) is not None
+                ]
+                if disponibles_fig:
+                    st.subheader("Comparaciones del análisis original")
+                    pestanas = st.tabs([titulo for titulo, _ in disponibles_fig])
+                    for pestana, (titulo, ruta) in zip(pestanas, disponibles_fig):
+                        with pestana:
+                            st.image(ruta.read_bytes(), caption=titulo, use_container_width=True)
+                st.caption("Animación preparada con datos reales de SPHEREx; no es una consulta en vivo.")
+
+        else:  # notebook
+            if notebook is None:
+                st.info("Todavía no está disponible el notebook de este objeto.")
+            else:
+                try:
+                    contenido = json.loads(notebook.read_text(encoding="utf-8"))
+                    celdas = contenido.get("cells", [])
+                    st.subheader(f"Cuaderno de análisis · {etiquetas[clave]}")
+                    st.caption("Puedes leer el procedimiento y el código. "
+                               "La web no ejecuta estas celdas ni descarga imágenes nuevas.")
+                    st.download_button("⬇️ Descargar notebook para Google Colab",
+                                       data=notebook.read_bytes(), file_name=notebook.name,
+                                       mime="application/x-ipynb+json", key=f"nb_{clave}")
+                    st.link_button("Abrir Google Colab", "https://colab.research.google.com/")
+                    st.caption("Para ejecutarlo: descarga el notebook, abre Colab y selecciona "
+                               "Archivo → Subir notebook. Si IRSA sigue con errores 502, "
+                               "la ejecución puede fallar.")
+                    for i, celda in enumerate(celdas, 1):
+                        texto_celda = "".join(celda.get("source", []))
+                        if not texto_celda.strip():
+                            continue
+                        if celda.get("cell_type") == "markdown":
+                            st.markdown(texto_celda)
+                        elif celda.get("cell_type") == "code":
+                            with st.expander(f"Celda {i} · Código Python", expanded=False):
+                                st.code(texto_celda, language="python")
+                    if not any(c.get("outputs") for c in celdas):
+                        st.caption("Este notebook no tiene figuras ni resultados guardados dentro "
+                                   "del propio archivo; se mostrarán cuando añadamos los GIF/PNG.")
+                except (OSError, ValueError, UnicodeError) as error:
+                    st.error(f"No se pudo leer el notebook: {error}")
+
     st.stop()
 
 if pagina == "Asteroides":
