@@ -14,3 +14,5 @@ AI assistance was primarily used for:
 The project concept, scientific objectives, and overall direction were defined by the team. The team was responsible for integrating the code, conducting the analyses, interpreting the results, and making the final project decisions.
 
 All astronomical observations are sourced from **NASA/IPAC IRSA and SPHEREx**. AI-generated content was not used to fabricate astronomical observations or scientific measurements.
+
+https://spherex-explorer-mptbfle83ypohcbdj5nvxk.streamlit.app/
