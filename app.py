@@ -225,7 +225,7 @@ with st.sidebar:
 st.markdown('''<section class="hero-panel">
     <span class="team-tag">✦ PLANETA 9</span>
     <div class="hero-eyebrow">NASA SPACE APPS CHALLENGE · 2026</div>
-    <div class="hero-title">El cielo cambia.<br><em>Vamos a explorarlo.</em></div>
+    <div class="hero-title">El cielo siempre está cambiando.<br><em>¡Vamos a explorarlo!</em></div>
     <div class="hero-desc">Elige una región del cielo y compárala en diferentes fechas.
        Usamos imágenes infrarrojas reales del telescopio espacial SPHEREx para crear
        una pequeña película del universo.</div>
